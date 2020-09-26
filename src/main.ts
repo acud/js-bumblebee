@@ -1,61 +1,35 @@
-const bunyan = require('bunyan');
-const router = require('./api/router');
+import { BeeHttpClient } from './bee/client';
+import buildRouter from './api/router';
+import buildDebugRouter from './debugapi/router'
+import * as minimist from 'minimist';
+import * as config from './config/config'
+import { BunyanLogger } from './logger/logger';
+import { PrometheusMetrics } from './metrics/metrics';
+import { OpenTracer } from './tracing/tracer';
 
 
-function newBumblebee() {
-  let log = bunyan.createLogger({
-      name: "bumblebee-logger",                     // Required
-      level: 'trace',      // Optional, see "Levels" section
-      stream: process.stdout,           // Optional, see "Streams" section
-  });
+const argv = minimist(process.argv.slice(2));
+const cfg = config.parseArgs(argv)
+const log = new BunyanLogger(cfg.Verbosity)
+const metrics = new PrometheusMetrics()
+const tracer = new OpenTracer(cfg.JaegerServiceName,log,"")
 
-  let r = router.buildRouter()
-  log.info("bumblebee starting on port 3000")
-  r.listen(3000)
+async function newBumblebee(cfg: config.Config) {
+  const client = new BeeHttpClient(cfg.BeeListenAddress,log,tracer)
+  const router = buildRouter(client, log, metrics,tracer)
 
+  log.info(`bumblebee starting on port ${cfg.ListenPort}`)
+  router.listen(cfg.ListenPort)
 }
 
-newBumblebee()
+function newDebugApi(cfg: config.Config) {
+  const router = buildDebugRouter(metrics, log)
+  log.info(`debugapi starting on port ${cfg.DebugApiPort}`)
 
-/**
- * Some predefined delays (in milliseconds).
- */
-export enum Delays {
-  Short = 500,
-  Medium = 2000,
-  Long = 5000,
+  router.listen(cfg.DebugApiPort)
 }
 
-/**
- * Returns a Promise<string> that resolves after given time.
- *
- * @param {string} name - A name.
- * @param {number=} [delay=Delays.Medium] - Number of milliseconds to delay resolution of the Promise.
- * @returns {Promise<string>}
- */
-function delayedHello(
-  name: string,
-  delay: number = Delays.Medium,
-): Promise<string> {
-  return new Promise((resolve: (value?: string) => void) =>
-    setTimeout(() => resolve(`Hello, ${name}`), delay),
-  );
-}
-
-/**
- * 
- * @param param1 the name of the something
- */
-export async function dotuff(param1: string): Promise<number> {
-
-  console.log(param1)
-  return Promise.resolve(13)
-}
-
-// Below are examples of using ESLint errors suppression
-// Here it is suppressing missing return type definitions for greeter function
-
-// eslint-disable-next-line @typescript-eslint/explicit-module-boundary-types
-export async function greeter(name: string) {
-  return await delayedHello(name, Delays.Long);
+newBumblebee(cfg)
+if (cfg.DebugApiEnabled) {
+  newDebugApi(cfg)
 }
